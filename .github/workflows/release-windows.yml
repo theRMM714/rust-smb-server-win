@@ -1,0 +1,30 @@
+# 这个 fork 只为一件事：产出 Windows 上可用的 SMB 共享 helper（Solomni 的 vm 档在 Windows 宿主用它）。
+# 产物挂在本仓 Release 上；Solomni 只按 URL 下载，不把 fork 的提交史带进产品仓。
+name: release-windows
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build
+        run: cargo build --release --bin smbd --target x86_64-pc-windows-msvc
+      - name: stage asset
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/smbd.exe dist/smbd-windows-x86_64.exe
+      - name: upload release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/smbd-windows-x86_64.exe

@@ -16,7 +16,26 @@
 //!   `?` and `*`), since cap-std only provides raw `entries()`.
 
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::FileExt as _;
+
+// Windows 调研补丁（非产品代码）：Windows 的 std::fs::File 只给 seek_read / seek_write，
+// 这里补出与 Unix FileExt 同名的 read_at / write_at，让下面的调用点原样成立。
+#[cfg(windows)]
+trait WinPositionalIo {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize>;
+    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize>;
+}
+
+#[cfg(windows)]
+impl WinPositionalIo for std::fs::File {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        std::os::windows::fs::FileExt::seek_read(self, buf, offset)
+    }
+    fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
+        std::os::windows::fs::FileExt::seek_write(self, buf, offset)
+    }
+}
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -377,15 +396,17 @@ impl ShareBackend for LocalFsBackend {
         let root = Arc::clone(&self.root);
 
         spawn_blocking(move || -> io::Result<()> {
-            match root.remove_file(&rel) {
-                Ok(()) => Ok(()),
-                Err(e) if e.kind() == io::ErrorKind::IsADirectory => {
-                    // Caller's intent was "delete this name"; if it turned
-                    // out to be a directory, fall back to remove_dir which
-                    // refuses non-empty dirs (mapped to NotEmpty above).
-                    root.remove_dir(&rel)
-                }
-                Err(e) => Err(e),
+            // 调研补丁：Windows 上对目录调 remove_file 得到的是 PermissionDenied，
+            // 不是 IsADirectory，原来的回退进不去。先按元数据认目录，再决定删法。
+            let is_dir = match root.metadata(&rel) {
+                Ok(md) => md.is_dir(),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+                Err(e) => return Err(e),
+            };
+            if is_dir {
+                root.remove_dir(&rel)
+            } else {
+                root.remove_file(&rel)
             }
         })
         .await

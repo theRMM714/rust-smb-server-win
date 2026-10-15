@@ -64,7 +64,9 @@ pub async fn handle(
         let backend = tree.share.backend.clone();
         drop(tree);
         if let Err(e) = backend.unlink(&path).await {
+            // 调研补丁：delete-on-close 失败必须如实回错误状态，不能报成功却什么都没删。
             debug!(error = %e, "delete-on-close unlink failed");
+            return HandlerResponse::err(e.to_nt_status());
         }
     }
 

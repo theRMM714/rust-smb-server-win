@@ -14,13 +14,16 @@
 
 ## 与上游的差异
 
-全部改动集中在一次提交（Windows port + smbd helper）：
+基准是上游 `paltaio/rust-smb-server` 的 `4ce1981a`；改动集中在一次提交（Windows port + smbd helper）。
 
-- 新增 binary `smbd`（`src/bin/smbd.rs`）：`smbd --listen <ip:port> --share <名>=<目录>[:ro] …`
+- `src/fs/local.rs`：把 `std::os::unix::fs::FileExt` 收进 `cfg(unix)`，Windows 上补 `seek_read` / `seek_write` 垫片（同名 `read_at` / `write_at`）。
+- `src/fs/local.rs` 的 `LocalFsBackend::unlink`：先按元数据判目录，再走 `remove_dir` / `remove_file`（Windows 上对目录调 `remove_file` 返回 PermissionDenied，原来的 `IsADirectory` 回退进不去）。
+- `src/handlers/close.rs`：delete-on-close 的 `unlink` 失败要回错误状态，不能吞成成功（否则 `rmdir` 假成功、目录还在）。
+- 新增 binary `smbd`（`src/bin/smbd.rs`）：
+  - `smbd --listen <ip:port> --share <名>=<目录>[:ro] …`；
   - 只支持**匿名**共享（guest 侧 `-o guest`），没有用户 / 密码；
-  - 绑定成功后向 stdout 打一行 `LISTENING <ip:port>` 并 flush，随后服务到终止信号；
+  - 绑定成功后向 stdout 打一行 `LISTENING <ip:port>` 并 flush，随后服务到 Ctrl-C 或终止信号；
   - NetBIOS 名固定 `SOLOMNI`。
-- Windows 上的定位 IO 修正；`unlink` 对目录的识别；delete-on-close 的错误传播。
 
 上游库的公开 API 与行为不变——`smb-server` crate 照旧可用。
 
